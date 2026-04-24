@@ -1,25 +1,27 @@
-# Documentation DevOps
+# Documentation DevOps: Lucas GERARD / Ryan AMSELLEM--BOUSIGNAC
 
 ## Partie Docker
 
-### Choix 1 :
+### Choix 1 Image de base du backend :
 
-Taille image Backend avec 18 alpine :  187.16 mb
+Taille image Backend avec node:18 alpine :  187.16 mb
 Nombre de vulnérabilité trivy : 50 
 
-Taille image Backend avec 20 alpine :  199.43 mb
+Taille image Backend avec node:20 alpine :  199.43 mb
 Nombre de vulnérabilité trivy : 14 
 
-Taille image Backend avec 18 slim :  284.8 mb
+Taille image Backend avec node:18 slim :  284.8 mb
 Nombre de vulnérabilité trivy : 166 
 
-Je pars donc sur le 20 alpine car pas beaucoup plus lourd et avec le moins de faille donc plus sécu
+Je pars donc sur le node:20 alpine car c'est celui qui à le moins de vulnérabilités, et aussi sa taille et légérement plus élevée que le node:18 alpine. Je prèfère donc avoir une meilleur sécurité pour un petit peu plus d'espace utilisé.
 
-## Choix 2 : 
+### Choix 2 Politique de redemarrage dans Compose : 
 
 Je décide d'utiliser unless-stopped car tant que quelqu'un ne décide pas de le couper, il se relancera. Cela laisse un contrôle supplémentaire pour être sûr de ce qui est lancé ou non. 
 Il redémarre si il y a un crash mais ne redémarre pas si il est arrêté manuellement. Donc à 3h, si le backend crash, il repart automatiquement.
 Et si on veut garder un service stop, on peut décider qu'il soit stopper.
+
+## Partie Kubernetes
 
 ### Choix 3 : Stratégie de déploiement Kubernetes
 
@@ -36,3 +38,12 @@ Je pars sur 1 seul replica car en staging, le trafic est très faible (uniquemen
 
 **Pour l'environnement de Production (3 replicas minimum) :**
 Je décide de mettre 3 replicas car en production, la haute disponibilité et la tolérance aux pannes sont indispensables. Si un pod plante, il y en a toujours deux autres pour absorber le trafic des utilisateurs instantanément. C'est aussi le nombre idéal pour que mon "Rolling Update" (zéro downtime) se déroule de manière fluide, sans surcharger les pods restants pendant que K8s remplace l'ancienne version. Enfin, c'est une excellente base avant que l'autoscaler (HPA) ne prenne le relais et n'ajoute des pods si la charge CPU augmente.
+
+
+# Une difficulté rencontré pendant le projet: 
+
+Nous avons eu un soucis avec Redis lors du passage des tests sur la CI. En effet, nous avons une erreur, qui était que l'adresse du service Redis était introuvable. Pour résoudre cette erreur, nous avons fait: 
+1) Ajouté l'adresse du service Redis en Secret Variable sur Github, (la même que dans le .env), et ajouté dans ci.yml, l'adresse contenu dans le .env.
+2) Nous avons aussi mocké le service Redis pour qu'il puisse l'atteindre et passer les tests.
+
+[URL de l'image sur Docker Hub](https://hub.docker.com/r/lucasgpro/taskflow-backend)
