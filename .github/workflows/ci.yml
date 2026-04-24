@@ -13,6 +13,13 @@ jobs:
   test:
     name: Tests sur Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-retries 5
+    
     env:
       REDIS_URL: ${{ secrets.REDIS_URL }}
     strategy:
@@ -33,7 +40,9 @@ jobs:
 
       - name: Lancer les tests
         run: cd backend && npm test
+      
 
+      
   # ── JOB 2 : LINT ──────────────────────────────────────────────────
   lint:
     name: Lint
