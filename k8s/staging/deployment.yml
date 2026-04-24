@@ -1,38 +1,70 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: stockalert
-  namespace: stockalert
+  name: taskflow-backend
+  namespace: staging
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: stockalert
+      app: taskflow-backend
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
+      maxSurge: 0
       maxUnavailable: 1
   template:
     metadata:
       labels:
-        app: stockalert
+        app: taskflow-backend
     spec:
       containers:
-      - name: api
-        image: hotweels94/stockalert:v1.0.1
+      - name: backend
+        image: lucasgpro/taskflow-backend:staging
         ports:
-        - containerPort: 3000
-        env:
-        - name: API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: stockalert-secret
-              key: API_KEY
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: taskflow-config
+        - secretRef:
+            name: taskflow-secret
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
         readinessProbe:
           httpGet:
-            command:
             path: /health
-            port: 3000
+            port: 3001
           initialDelaySeconds: 5
           periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-cache
+  namespace: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: taskflow-cache
+  template:
+    metadata:
+      labels:
+        app: taskflow-cache
+    spec:
+      containers:
+      - name: cache
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379

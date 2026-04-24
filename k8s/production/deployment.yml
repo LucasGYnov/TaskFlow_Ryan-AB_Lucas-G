@@ -1,38 +1,127 @@
+# ── Déploiement Backend Prod ──
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: stockalert
-  namespace: stockalert
+  name: taskflow-backend
+  namespace: production
 spec:
-  replicas: 2
+  replicas: 3 # Choix 4 : 3 replicas min en prod
   selector:
     matchLabels:
-      app: stockalert
+      app: taskflow-backend
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
+      maxSurge: 1 # Choix 3 : Prod (Zero downtime)
+      maxUnavailable: 0 # Choix 3 : Prod (Zero downtime)
   template:
     metadata:
       labels:
-        app: stockalert
+        app: taskflow-backend
     spec:
       containers:
-      - name: api
-        image: hotweels94/stockalert:v1.0.1
+      - name: backend
+        # Note : Le tag "latest" sera remplacé par le sed de ton GitHub Actions
+        image: lucasgpro/taskflow-backend:latest
         ports:
-        - containerPort: 3000
-        env:
-        - name: API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: stockalert-secret
-              key: API_KEY
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: taskflow-config
+        - secretRef:
+            name: taskflow-secret
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
         readinessProbe:
           httpGet:
-            command:
             path: /health
-            port: 3000
+            port: 3001
           initialDelaySeconds: 5
           periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 15
+          periodSeconds: 10
+---
+# ── 🚀 AVANCÉ : HorizontalPodAutoscaler (HPA) ──
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: taskflow-backend-hpa
+  namespace: production
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: taskflow-backend
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+---
+# ── 🚀 AVANCÉ : PodDisruptionBudget (PDB) ──
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: taskflow-backend-pdb
+  namespace: production
+spec:
+  minAvailable: 1 # Garantit toujours au moins 1 pod en vie
+  selector:
+    matchLabels:
+      app: taskflow-backend
+---
+# ── Déploiement Cache Prod ──
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: taskflow-cache
+  namespace: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: taskflow-cache
+  template:
+    metadata:
+      labels:
+        app: taskflow-cache
+    spec:
+      containers:
+      - name: cache
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+---
+# ── 🚀 AVANCÉ : Network Policy (Cache isolé) ──
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-cache
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: taskflow-cache
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: taskflow-backend
+    ports:
+    - protocol: TCP
+      port: 6379

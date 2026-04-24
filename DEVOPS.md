@@ -28,3 +28,11 @@ Je pars sur cette stratégie car en staging, l'objectif est de valider le code t
 
 **Pour l'environnement de Production (maxUnavailable: 0 / maxSurge: 1) :**
 Je décide d'utiliser cette stratégie car en production, la priorité absolue est la disponibilité pour les utilisateurs finaux (zéro downtime). Avec cette configuration, Kubernetes crée d'abord le nouveau pod et attend qu'il soit pleinement opérationnel avant de couper l'ancien. Le déploiement est légèrement plus lent et demande temporairement plus de ressources, mais cela garantit qu'il n'y a aucune coupure de service lors des mises à jour.
+
+### Choix 4 : Nombre de replicas
+
+**Pour l'environnement de Staging (1 replica) :**
+Je pars sur 1 seul replica car en staging, le trafic est très faible (uniquement l'équipe pour valider les développements). Un seul pod suffit amplement pour vérifier que l'application fonctionne. De plus, cela s'aligne parfaitement avec mon Choix 3 (économie de ressources et acceptation d'une courte interruption) et évite de consommer de la RAM et du CPU inutilement sur le cluster de test.
+
+**Pour l'environnement de Production (3 replicas minimum) :**
+Je décide de mettre 3 replicas car en production, la haute disponibilité et la tolérance aux pannes sont indispensables. Si un pod plante, il y en a toujours deux autres pour absorber le trafic des utilisateurs instantanément. C'est aussi le nombre idéal pour que mon "Rolling Update" (zéro downtime) se déroule de manière fluide, sans surcharger les pods restants pendant que K8s remplace l'ancienne version. Enfin, c'est une excellente base avant que l'autoscaler (HPA) ne prenne le relais et n'ajoute des pods si la charge CPU augmente.
