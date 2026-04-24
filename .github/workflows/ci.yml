@@ -13,6 +13,8 @@ jobs:
   test:
     name: Tests sur Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    env:
+      REDIS_URL: ${{ secrets.REDIS_URL }}
     strategy:
       matrix:
         node-version: [18, 20] # tests sur Node 18 et Node 20 en parallele avec une var
