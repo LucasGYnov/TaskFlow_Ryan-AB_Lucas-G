@@ -1,5 +1,6 @@
-# TaskFlow
+[![TaskFlow CI/CD](https://github.com/LucasGYnov/TaskFlow_Ryan-AB_Lucas-G/actions/workflows/ci.yml/badge.svg)](https://github.com/LucasGYnov/TaskFlow_Ryan-AB_Lucas-G.git/actions/workflows/ci.yml)
 
+# TaskFlow
 Application web de gestion de tâches. Interface Kanban avec backend Node.js et persistance Redis.
 
 ## Stack technique

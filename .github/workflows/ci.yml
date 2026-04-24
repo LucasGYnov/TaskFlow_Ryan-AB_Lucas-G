@@ -1,0 +1,220 @@
+name: TaskFlow CI/CD
+
+on:
+  push:
+    branches: [main, staging]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── JOB 1 : TESTS (Matrix Node 18 & 20) ───────────────────────────
+  test:
+    name: Tests sur Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20] # tests sur Node 18 et Node 20 en parallele avec une var
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm' # Second run => visible + rapide ds l'historique Actions Github
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Installer les dépendances
+        run: cd backend && npm ci # install = màj, ci = clean install
+
+      - name: Lancer les tests
+        run: cd backend && npm test
+
+  # ── JOB 2 : LINT ──────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: test # Attends ke done du job test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Installer les dépendances
+        run: cd backend && npm ci
+
+      - name: Vérifier le style du code
+        run: cd backend && npm run lint
+
+  # ── JOB 3 : audit  ──────────────────────────────────
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Installer Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Scanner les vulnérabilités
+        run: |
+          cd backend
+          npm audit --audit-level=high > audit-report.txt # si HIGH ou CRITICAL bloque la suite de la pipline
+
+      - name: Sauvegarder le rapport si échec
+        uses: actions/upload-artifact@v4
+        if: failure() # S'exécute uniquement si le scan échoue
+        with:
+          name: npm-audit-report
+          path: backend/audit-report.txt
+
+  # ── JOB 4 : build ──────────────────────────────────
+  build:
+    name: Build Docker & Scan Trivy
+    runs-on: ubuntu-latest
+    needs: [lint, audit]
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/staging' # Déclenché sur tags + branch staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Définir le tag image
+        id: vars
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=staging" >> $GITHUB_OUTPUT
+          fi
+
+      # Étape analyse (implémenté en local avec buildx)
+      - name: Builder l'image locale
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/taskflow-backend:${{ steps.vars.outputs.tag }} ./backend
+
+      # AVANCÉ : Bloquer le pipeline si la taille depasse 200MB
+      - name: Vérifier la taille de l'image
+        run: |
+          SIZE=$(docker image inspect ${{ secrets.DOCKER_USERNAME }}/taskflow-backend:${{ steps.vars.outputs.tag }} --format='{{.Size}}')
+          SIZE_MB=$(expr $SIZE / 1024 / 1024)
+          echo "Taille de l'image : ${SIZE_MB} MB"
+          if [ "$SIZE_MB" -gt 200 ]; then
+            echo "❌ L'image dépasse 200MB !"
+            exit 1
+          fi
+          echo "✅ Taille valide."
+
+      - name: Scan de sécurité Trivy (bloquant sur CRITICAL)
+        # si HIGH bloque la suite de la pipeline
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            ghcr.io/aquasecurity/trivy:latest image \
+            --format table \
+            --exit-code 1 \
+            --severity CRITICAL \
+            --output trivy-report.txt \
+            ${{ secrets.DOCKER_USERNAME }}/taskflow-backend:${{ steps.vars.outputs.tag }}
+
+      - name: Sauvegarder le rapport Trivy
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
+      # AVANCÉ : docker buildx (Mac sont ARM + serv cloud => x86)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login Docker Hub
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+        
+      # AVANCÉ : Builder l'image pour 2 architectures en parallele (linux/amd64 + linux/arm64)
+      - name: Buildx & Push sur Docker Hub
+        run: |
+          cd backend
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -t ${{ secrets.DOCKER_USERNAME }}/taskflow-backend:${{ steps.vars.outputs.tag }} \
+            --push .
+
+  # ── JOB 5 : deploy-staging ────────────────────────────────────────
+  deploy-staging:
+    name: Deploy → Staging Kubernetes
+    runs-on: ubuntu-latest
+    environment: staging # AVANCÉ : Environnement GitHub staging
+    needs: build
+    if: github.ref == 'refs/heads/staging'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configurer Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Appliquer les manifests Staging
+        run: |
+          kubectl apply -f k8s/staging/          # Forcer la màj de l'image (=> déploie avec le tag constant 'staging')
+          kubectl rollout restart deployment/taskflow-backend -n staging
+
+  # ── JOB 6 : smoke-test ──────────────────────────────────
+  smoke-test:
+    name: Smoke Test Staging
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - name: Configurer Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Attendre que les pods soient Ready
+        run: |
+          kubectl rollout status deployment/taskflow-backend -n staging --timeout=120s # attends le statut ready avant de continuer
+
+      - name: Vérifier l'état de santé (/health)
+        run: |
+          kubectl port-forward svc/taskflow-backend-service 3001:3001 -n staging &
+          sleep 5
+          curl -f http://localhost:3001/health # tunnel temporaire => accès service , si test échoue
+
+  # ── JOB 7 : deploy-production ─────────────────────────────────────
+  deploy-production:
+    name: Deploy → Production Kubernetes
+    runs-on: ubuntu-latest
+    environment: production # AVANCÉ : La production necessite une approbation manuelle avant deploiement (add dans le Required reviewers)
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') # Uniquement sur Tag, sinon job est ignoré
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configurer Kubeconfig Prod
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_PROD }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Appliquer les manifests Production
+        run: |
+          # Modification de l'image=> injecter la bonne version (tag)
+          sed -i "s/taskflow-backend:latest/taskflow-backend:${{ github.ref_name }}/g" k8s/production/deployment.yml
+          kubectl apply -f k8s/production/
+          kubectl rollout status deployment/taskflow-backend -n production
